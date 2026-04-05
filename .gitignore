@@ -1,0 +1,34 @@
+# ---------------------------------------------------
+# CMake & C++ Build Files (The heavy stuff)
+# ---------------------------------------------------
+build/
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+
+# ---------------------------------------------------
+# Compiled Pybind11 Binaries
+# (Everyone must compile their own locally!)
+# ---------------------------------------------------
+*.so
+*.pyd
+*.dylib
+*.dll
+
+# ---------------------------------------------------
+# Python Cache & Environments
+# ---------------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+venv/
+env/
+.venv/
+
+# ---------------------------------------------------
+# IDE & OS Junk
+# ---------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
