@@ -8,7 +8,7 @@ sys.path.append(os.path.join(build_dir, 'Release'))
 
 from PyQt5.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout
 
-from tab import MainTab
+from extraction_tab import MainTab
 
 class MainWindow(QMainWindow):
     def __init__(self):
