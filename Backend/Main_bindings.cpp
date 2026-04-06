@@ -33,11 +33,13 @@ struct PyDescriptionResult {
     py::bytes harrisVis;
     py::bytes lambdaVis;
 
-    // Raw descriptors as flat byte blobs (row-major float32, N×128)
-    // Python side can reconstruct with:
-    //   np.frombuffer(result.harris_desc_bytes, dtype=np.float32).reshape(-1, 128)
+    // Descriptor bytes (the 128-D descriptors)
     py::bytes harrisDescBytes;
     py::bytes lambdaDescBytes;
+
+    // the (x, y) pixel locations
+    std::vector<std::pair<float, float>> harrisKeypoints;
+    std::vector<std::pair<float, float>> lambdaKeypoints;
 };
 
 // =============================================================================
@@ -92,7 +94,6 @@ static PyDescriptionResult py_run_description(
     // ── Pack descriptor matrices as raw float32 bytes ─────────────────────
     auto matToBytes = [](const cv::Mat& m) -> py::bytes {
         if (m.empty()) return py::bytes("", 0);
-        // Ensure the matrix is contiguous CV_32F
         cv::Mat cont;
         if (m.isContinuous()) cont = m;
         else                  m.copyTo(cont);
@@ -100,6 +101,19 @@ static PyDescriptionResult py_run_description(
             reinterpret_cast<const char*>(cont.ptr<float>(0)),
             static_cast<size_t>(cont.total()) * sizeof(float));
     };
+
+    // ── Pack keypoint coordinates — one (x, y) pair per descriptor row ────
+    // desc.harrisKps / desc.lambdaKps are already in the original image's
+    // pixel coordinate space (same space the matching person will work in).
+    std::vector<std::pair<float, float>> harrisKpts, lambdaKpts;
+    harrisKpts.reserve(desc.harrisKps.size());
+    lambdaKpts.reserve(desc.lambdaKps.size());
+
+    for (const auto& kp : desc.harrisKps)
+        harrisKpts.push_back({ kp.pt.x, kp.pt.y });
+
+    for (const auto& kp : desc.lambdaKps)
+        lambdaKpts.push_back({ kp.pt.x, kp.pt.y });
 
     return {
         static_cast<int>(desc.harrisKps.size()),
@@ -109,7 +123,9 @@ static PyDescriptionResult py_run_description(
         encode_image(desc.harrisVis),
         encode_image(desc.lambdaVis),
         matToBytes(desc.harrisDesc),
-        matToBytes(desc.lambdaDesc)
+        matToBytes(desc.lambdaDesc),
+        std::move(harrisKpts),
+        std::move(lambdaKpts)
     };
 }
 
@@ -146,7 +162,10 @@ PYBIND11_MODULE(cv_backend, m) {
         .def_readonly("harris_vis",        &PyDescriptionResult::harrisVis)
         .def_readonly("lambda_vis",        &PyDescriptionResult::lambdaVis)
         .def_readonly("harris_desc_bytes", &PyDescriptionResult::harrisDescBytes)
-        .def_readonly("lambda_desc_bytes", &PyDescriptionResult::lambdaDescBytes);
+        .def_readonly("lambda_desc_bytes", &PyDescriptionResult::lambdaDescBytes)
+        // NEW — pixel coordinates aligned 1-to-1 with descriptor rows
+        .def_readonly("harris_keypoints",  &PyDescriptionResult::harrisKeypoints)
+        .def_readonly("lambda_keypoints",  &PyDescriptionResult::lambdaKeypoints);
 
     m.def("run_description",
           &py_run_description,

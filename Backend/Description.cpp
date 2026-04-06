@@ -8,9 +8,6 @@
 #include <vector>
 #include <chrono>
 
-// =============================================================================
-//  Constants  (mirror the reference SIFT repo)
-// =============================================================================
 namespace {
 
 constexpr int    SCALES_PER_OCT    = 3;
@@ -141,11 +138,6 @@ assignOrientations(const cv::KeyPoint&                    kpt,
     const cv::Mat& img = pyr[oct][layer];
     const cv::Size sz  = img.size();
 
-    // Scale of this keypoint inside the octave coordinate frame
-    // kpt.pt and kpt.size are in the ORIGINAL image space (halved once
-    // because we upsampled by 2 in the pyramid base, then downsampled oct times).
-    // The pyramid base was upsampled ×2, so a point at pixel p in the original
-    // is at 2p in octave-0.  Each subsequent octave halves: 2p / 2^oct = p * 2^(1-oct).
     double octScale = std::pow(2.0, static_cast<double>(oct));  // pixels per octave unit
     int    base_x   = static_cast<int>(std::round(kpt.pt.x * 2.0 / octScale));
     int    base_y   = static_cast<int>(std::round(kpt.pt.y * 2.0 / octScale));
@@ -290,8 +282,6 @@ static bool computeDescriptor(const cv::KeyPoint&                    kpt,
         }
     }
 
-    // Build 3-D histogram tensor  (WINDOW_WIDTH+2) × (WINDOW_WIDTH+2) × HIST_BINS
-    // The +2 guard-ring around each axis absorbs trilinear spill-over.
     const int   W  = DESC_WINDOW_WIDTH + 2;
     const int   B  = DESC_HIST_BINS;
     std::vector<double> tensor(static_cast<size_t>(W * W * B), 0.0);
