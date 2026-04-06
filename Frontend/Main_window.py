@@ -4,7 +4,7 @@ import os
 current_dir = os.path.dirname(os.path.abspath(__file__))
 build_dir = os.path.abspath(os.path.join(current_dir, '..', 'build'))
 sys.path.append(build_dir)
-sys.path.append(os.path.join(build_dir, 'Release')) 
+sys.path.append(os.path.join(build_dir, 'Release'))
 
 from PyQt5.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout
 
@@ -21,9 +21,9 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(central)
 
         self.tabs = QTabWidget()
-        
-        self.tabs.addTab(MainTab(), "Main")
 
+        self.main_tab = MainTab()
+        self.tabs.addTab(self.main_tab, "Main")
 
         root.addWidget(self.tabs)
 
