@@ -4,6 +4,7 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <unordered_map>
 #include <vector>
 
 // =============================================================================
@@ -74,7 +75,22 @@ static std::vector<cv::DMatch> matchSSD(const cv::Mat& descA,
             matches.emplace_back(i, bestIdx, best1);
         }
     }
-    return matches;
+
+    // Enforce one-to-one: keep only the best match per B descriptor
+    std::unordered_map<int, int> bestForB;  // trainIdx → index in matches
+    for (int i = 0; i < static_cast<int>(matches.size()); ++i) {
+        int tid = matches[i].trainIdx;
+        auto it = bestForB.find(tid);
+        if (it == bestForB.end() || matches[i].distance < matches[it->second].distance) {
+            bestForB[tid] = i;
+        }
+    }
+    std::vector<cv::DMatch> unique;
+    unique.reserve(bestForB.size());
+    for (const auto& [tid, idx] : bestForB) {
+        unique.push_back(matches[idx]);
+    }
+    return unique;
 }
 
 // =============================================================================
@@ -118,7 +134,22 @@ static std::vector<cv::DMatch> matchNCC(const cv::Mat& descA,
             matches.emplace_back(i, bestIdx, d1);
         }
     }
-    return matches;
+
+    // Enforce one-to-one: keep only the best match per B descriptor
+    std::unordered_map<int, int> bestForB;  // trainIdx → index in matches
+    for (int i = 0; i < static_cast<int>(matches.size()); ++i) {
+        int tid = matches[i].trainIdx;
+        auto it = bestForB.find(tid);
+        if (it == bestForB.end() || matches[i].distance < matches[it->second].distance) {
+            bestForB[tid] = i;
+        }
+    }
+    std::vector<cv::DMatch> unique;
+    unique.reserve(bestForB.size());
+    for (const auto& [tid, idx] : bestForB) {
+        unique.push_back(matches[idx]);
+    }
+    return unique;
 }
 
 // =============================================================================
