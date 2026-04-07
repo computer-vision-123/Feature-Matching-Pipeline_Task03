@@ -35,20 +35,40 @@ struct PyDescriptionResult {
 };
 
 struct PyMatchingOutput {
-    // Harris
+    // Harris SSD-matched
     py::bytes harrisDescBytesA;
     py::bytes harrisDescBytesB;
     std::vector<std::pair<float, float>> harrisKptsA;
     std::vector<std::pair<float, float>> harrisKptsB;
     int harrisCountA;
     int harrisCountB;
-    // Lambda
+    // Lambda SSD-matched
     py::bytes lambdaDescBytesA;
     py::bytes lambdaDescBytesB;
     std::vector<std::pair<float, float>> lambdaKptsA;
     std::vector<std::pair<float, float>> lambdaKptsB;
     int lambdaCountA;
     int lambdaCountB;
+    // Harris NCC-matched
+    std::vector<std::pair<float, float>> harrisNccKptsA;
+    std::vector<std::pair<float, float>> harrisNccKptsB;
+    int harrisNccCountA;
+    int harrisNccCountB;
+    // Lambda NCC-matched
+    std::vector<std::pair<float, float>> lambdaNccKptsA;
+    std::vector<std::pair<float, float>> lambdaNccKptsB;
+    int lambdaNccCountA;
+    int lambdaNccCountB;
+    // Timing (ms)
+    double harrisSsdTimeMs;
+    double lambdaSsdTimeMs;
+    double harrisNccTimeMs;
+    double lambdaNccTimeMs;
+    // Match counts
+    int harrisSsdMatchCount;
+    int lambdaSsdMatchCount;
+    int harrisNccMatchCount;
+    int lambdaNccMatchCount;
 };
 
 // =============================================================================
@@ -173,6 +193,7 @@ static PyMatchingOutput py_run_matching(const PyDescriptionResult& a,
     MatchingOutput out = runMatching(harris, lambda);
 
     return {
+        // SSD-matched
         matToBytes(out.harris.descA), matToBytes(out.harris.descB),
         fromKpts(out.harris.kptsA),   fromKpts(out.harris.kptsB),
         static_cast<int>(out.harris.kptsA.size()),
@@ -181,6 +202,23 @@ static PyMatchingOutput py_run_matching(const PyDescriptionResult& a,
         fromKpts(out.lambda.kptsA),   fromKpts(out.lambda.kptsB),
         static_cast<int>(out.lambda.kptsA.size()),
         static_cast<int>(out.lambda.kptsB.size()),
+        // NCC-matched keypoints
+        fromKpts(out.harrisNcc.kptsA), fromKpts(out.harrisNcc.kptsB),
+        static_cast<int>(out.harrisNcc.kptsA.size()),
+        static_cast<int>(out.harrisNcc.kptsB.size()),
+        fromKpts(out.lambdaNcc.kptsA), fromKpts(out.lambdaNcc.kptsB),
+        static_cast<int>(out.lambdaNcc.kptsA.size()),
+        static_cast<int>(out.lambdaNcc.kptsB.size()),
+        // Timing
+        out.harrisSsdTimeMs,
+        out.lambdaSsdTimeMs,
+        out.harrisNccTimeMs,
+        out.lambdaNccTimeMs,
+        // Match counts
+        static_cast<int>(out.harrisSsdMatches.size()),
+        static_cast<int>(out.lambdaSsdMatches.size()),
+        static_cast<int>(out.harrisNccMatches.size()),
+        static_cast<int>(out.lambdaNccMatches.size()),
     };
 }
 
@@ -231,6 +269,7 @@ PYBIND11_MODULE(cv_backend, m) {
           py::arg("sigma_base")  = 1.6);
 
     py::class_<PyMatchingOutput>(m, "MatchingOutput")
+        // SSD-matched
         .def_readonly("harris_desc_bytes_a", &PyMatchingOutput::harrisDescBytesA)
         .def_readonly("harris_desc_bytes_b", &PyMatchingOutput::harrisDescBytesB)
         .def_readonly("harris_kpts_a",       &PyMatchingOutput::harrisKptsA)
@@ -242,7 +281,26 @@ PYBIND11_MODULE(cv_backend, m) {
         .def_readonly("lambda_kpts_a",       &PyMatchingOutput::lambdaKptsA)
         .def_readonly("lambda_kpts_b",       &PyMatchingOutput::lambdaKptsB)
         .def_readonly("lambda_count_a",      &PyMatchingOutput::lambdaCountA)
-        .def_readonly("lambda_count_b",      &PyMatchingOutput::lambdaCountB);
+        .def_readonly("lambda_count_b",      &PyMatchingOutput::lambdaCountB)
+        // NCC-matched keypoints
+        .def_readonly("harris_ncc_kpts_a",   &PyMatchingOutput::harrisNccKptsA)
+        .def_readonly("harris_ncc_kpts_b",   &PyMatchingOutput::harrisNccKptsB)
+        .def_readonly("harris_ncc_count_a",  &PyMatchingOutput::harrisNccCountA)
+        .def_readonly("harris_ncc_count_b",  &PyMatchingOutput::harrisNccCountB)
+        .def_readonly("lambda_ncc_kpts_a",   &PyMatchingOutput::lambdaNccKptsA)
+        .def_readonly("lambda_ncc_kpts_b",   &PyMatchingOutput::lambdaNccKptsB)
+        .def_readonly("lambda_ncc_count_a",  &PyMatchingOutput::lambdaNccCountA)
+        .def_readonly("lambda_ncc_count_b",  &PyMatchingOutput::lambdaNccCountB)
+        // Timing
+        .def_readonly("harris_ssd_time_ms",    &PyMatchingOutput::harrisSsdTimeMs)
+        .def_readonly("lambda_ssd_time_ms",    &PyMatchingOutput::lambdaSsdTimeMs)
+        .def_readonly("harris_ncc_time_ms",    &PyMatchingOutput::harrisNccTimeMs)
+        .def_readonly("lambda_ncc_time_ms",    &PyMatchingOutput::lambdaNccTimeMs)
+        // Match counts
+        .def_readonly("harris_ssd_match_count", &PyMatchingOutput::harrisSsdMatchCount)
+        .def_readonly("lambda_ssd_match_count", &PyMatchingOutput::lambdaSsdMatchCount)
+        .def_readonly("harris_ncc_match_count", &PyMatchingOutput::harrisNccMatchCount)
+        .def_readonly("lambda_ncc_match_count", &PyMatchingOutput::lambdaNccMatchCount);
 
     m.def("run_matching",
           &py_run_matching,

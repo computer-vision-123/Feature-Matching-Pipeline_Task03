@@ -11,8 +11,29 @@ struct MatchingInput {
 };
 
 struct MatchingOutput {
+    // SSD-matched keypoints/descriptors (primary)
     MatchingInput harris;
     MatchingInput lambda;
+
+    // NCC-matched keypoints/descriptors
+    MatchingInput harrisNcc;
+    MatchingInput lambdaNcc;
+
+    // SSD matching timing (ms)
+    double harrisSsdTimeMs = 0.0;
+    double lambdaSsdTimeMs = 0.0;
+
+    // NCC matching timing (ms)
+    double harrisNccTimeMs = 0.0;
+    double lambdaNccTimeMs = 0.0;
+
+    // SSD matches (index pairs + distance)
+    std::vector<cv::DMatch> harrisSsdMatches;
+    std::vector<cv::DMatch> lambdaSsdMatches;
+
+    // NCC matches (index pairs + distance)
+    std::vector<cv::DMatch> harrisNccMatches;
+    std::vector<cv::DMatch> lambdaNccMatches;
 };
 
 MatchingOutput runMatching(const MatchingInput& harris, const MatchingInput& lambda);

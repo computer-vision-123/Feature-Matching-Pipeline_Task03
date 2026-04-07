@@ -13,8 +13,8 @@ from extraction_tab import MainTab
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Pipeline Test")
-        self.resize(400, 200)
+        self.setWindowTitle("Feature Matching Pipeline")
+        self.resize(1200, 800)
 
         central = QWidget()
         self.setCentralWidget(central)

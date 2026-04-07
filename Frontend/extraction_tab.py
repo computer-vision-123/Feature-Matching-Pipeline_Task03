@@ -1,12 +1,13 @@
 import os
+import random
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFileDialog, QDoubleSpinBox, QSpinBox, QGroupBox, QGridLayout,
     QSizePolicy, QSplitter, QProgressBar
 )
-from PyQt5.QtGui import QPixmap, QImage
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen, QColor
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPoint
 
 try:
     import cv_backend
@@ -16,7 +17,7 @@ except ImportError:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Worker
+#  Workers
 # ─────────────────────────────────────────────────────────────────────────────
 class DescriptionWorker(QThread):
     finished = pyqtSignal(object, int)
@@ -44,6 +45,23 @@ class DescriptionWorker(QThread):
             self.error.emit(str(e))
 
 
+class MatchingWorker(QThread):
+    finished = pyqtSignal(object)
+    error    = pyqtSignal(str)
+
+    def __init__(self, result_a, result_b):
+        super().__init__()
+        self.result_a = result_a
+        self.result_b = result_b
+
+    def run(self):
+        try:
+            out = cv_backend.run_matching(self.result_a, self.result_b)
+            self.finished.emit(out)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -60,6 +78,42 @@ def _image_label() -> QLabel:
         " border-radius: 6px; font-size: 12px; }"
     )
     return lbl
+
+def _random_colors(n: int, seed: int = 42):
+    rng = random.Random(seed)
+    colors = []
+    for i in range(n):
+        h = int((i * 360 / max(n, 1)) + rng.randint(0, 15)) % 360
+        s = rng.randint(180, 255)
+        v = rng.randint(180, 255)
+        colors.append(QColor.fromHsv(h, s, v))
+    return colors
+
+def _draw_keypoint_overlay(px: QPixmap, kpts: list,
+                            imgW: int, imgH: int,
+                            colors: list) -> QPixmap:
+    """Draw coloured squares on a copy of the image at each keypoint."""
+    if px is None:
+        return QPixmap()
+
+    canvas = px.copy()
+    painter = QPainter(canvas)
+    painter.setRenderHint(QPainter.Antialiasing)
+
+    scaleX = px.width()  / max(imgW, 1)
+    scaleY = px.height() / max(imgH, 1)
+    sz = 5  # half-size of each square
+
+    for i, (x, y) in enumerate(kpts):
+        px_x = int(x * scaleX)
+        px_y = int(y * scaleY)
+        pen = QPen(colors[i], 2)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(px_x - sz, px_y - sz, sz * 2, sz * 2)
+
+    painter.end()
+    return canvas
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -95,10 +149,18 @@ class MainTab(QWidget):
 
         self._img_bytes = [None, None]
         self._img_px    = [None, None]
+        self._img_sizes = [(0, 0), (0, 0)]
         self._results   = [None, None]
         self._workers   = [None, None]
         self._pending   = 0
         self._view_mode = ["harris", "harris"]
+
+        # Matching state
+        self._match_result = None
+        self._match_worker = None
+        self._match_view   = False       # True when showing match overlay
+        self._match_detector = "harris"  # "harris" or "lambda"
+        self._match_method   = "ssd"     # "ssd" or "ncc"
 
         self._build_ui()
 
@@ -140,19 +202,69 @@ class MainTab(QWidget):
         splitter.setSizes([600, 600])
         root.addWidget(splitter, stretch=1)
 
-        self._btn_run = QPushButton("▶  Run")
+        # ── Buttons row: Run + Match ─────────────────────────────────────────
+        btn_row = QHBoxLayout()
+
+        self._btn_run = QPushButton("▶  Run Description")
         self._btn_run.setEnabled(False)
         self._btn_run.clicked.connect(self._on_run)
-        root.addWidget(self._btn_run)
+        btn_row.addWidget(self._btn_run)
 
+        self._btn_match = QPushButton("🔗  Match")
+        self._btn_match.setEnabled(False)
+        self._btn_match.clicked.connect(self._on_match)
+        btn_row.addWidget(self._btn_match)
+
+        root.addLayout(btn_row)
+
+        # ── Match overlay controls (hidden until matching done) ──────────────
+        self._match_controls = QWidget()
+        mc = QHBoxLayout(self._match_controls)
+        mc.setContentsMargins(0, 0, 0, 0)
+        mc.setSpacing(6)
+
+        mc.addWidget(QLabel("Detector:"))
+        self._btn_m_harris = QPushButton("Harris")
+        self._btn_m_lambda = QPushButton("λ-")
+        self._btn_m_harris.setObjectName("active")
+        self._btn_m_harris.clicked.connect(lambda: self._set_match_detector("harris"))
+        self._btn_m_lambda.clicked.connect(lambda: self._set_match_detector("lambda"))
+        mc.addWidget(self._btn_m_harris)
+        mc.addWidget(self._btn_m_lambda)
+
+        mc.addSpacing(20)
+
+        mc.addWidget(QLabel("Method:"))
+        self._btn_m_ssd = QPushButton("SSD")
+        self._btn_m_ncc = QPushButton("NCC")
+        self._btn_m_ssd.setObjectName("active")
+        self._btn_m_ssd.clicked.connect(lambda: self._set_match_method("ssd"))
+        self._btn_m_ncc.clicked.connect(lambda: self._set_match_method("ncc"))
+        mc.addWidget(self._btn_m_ssd)
+        mc.addWidget(self._btn_m_ncc)
+
+        mc.addSpacing(20)
+
+        self._btn_back = QPushButton("✕ Back to Keypoints")
+        self._btn_back.clicked.connect(self._exit_match_view)
+        mc.addWidget(self._btn_back)
+
+        mc.addStretch()
+        self._match_controls.setVisible(False)
+        root.addWidget(self._match_controls)
+
+        # ── Progress bar ─────────────────────────────────────────────────────
         self._progress = QProgressBar()
         self._progress.setRange(0, 0)
         self._progress.setVisible(False)
         self._progress.setFixedHeight(6)
         root.addWidget(self._progress)
 
-        root.addWidget(self._stats_bar())
+        # ── Stats bars ───────────────────────────────────────────────────────
+        root.addWidget(self._desc_stats_bar())
+        root.addWidget(self._match_stats_bar())
 
+        # ── Status ───────────────────────────────────────────────────────────
         self._lbl_status = QLabel(
             "Ready." if BACKEND_AVAILABLE
             else "⚠ cv_backend not found – build the C++ module first."
@@ -190,8 +302,8 @@ class MainTab(QWidget):
 
         return box
 
-    def _stats_bar(self) -> QGroupBox:
-        box = QGroupBox("Results")
+    def _desc_stats_bar(self) -> QGroupBox:
+        box = QGroupBox("Description Results")
         h   = QHBoxLayout(box)
         h.setSpacing(20)
 
@@ -207,6 +319,45 @@ class MainTab(QWidget):
         h.addStretch()
         return box
 
+    def _match_stats_bar(self) -> QGroupBox:
+        self._match_stats_box = QGroupBox("Matching Results")
+        g = QGridLayout(self._match_stats_box)
+        g.setSpacing(6)
+
+        def stat_label():
+            lbl = QLabel("—")
+            lbl.setObjectName("stat")
+            return lbl
+
+        headers = ["", "SSD Matches", "SSD Time", "NCC Matches", "NCC Time"]
+        for c, h in enumerate(headers):
+            lbl = QLabel(h)
+            lbl.setStyleSheet("color: #7b7bff; font-weight: bold; font-size: 11px;")
+            g.addWidget(lbl, 0, c)
+
+        self._mstat_ssd_count_h = stat_label()
+        self._mstat_ssd_time_h  = stat_label()
+        self._mstat_ncc_count_h = stat_label()
+        self._mstat_ncc_time_h  = stat_label()
+        g.addWidget(QLabel("Harris"), 1, 0)
+        g.addWidget(self._mstat_ssd_count_h, 1, 1)
+        g.addWidget(self._mstat_ssd_time_h,  1, 2)
+        g.addWidget(self._mstat_ncc_count_h, 1, 3)
+        g.addWidget(self._mstat_ncc_time_h,  1, 4)
+
+        self._mstat_ssd_count_l = stat_label()
+        self._mstat_ssd_time_l  = stat_label()
+        self._mstat_ncc_count_l = stat_label()
+        self._mstat_ncc_time_l  = stat_label()
+        g.addWidget(QLabel("λ-"), 2, 0)
+        g.addWidget(self._mstat_ssd_count_l, 2, 1)
+        g.addWidget(self._mstat_ssd_time_l,  2, 2)
+        g.addWidget(self._mstat_ncc_count_l, 2, 3)
+        g.addWidget(self._mstat_ncc_time_l,  2, 4)
+
+        self._match_stats_box.setVisible(False)
+        return self._match_stats_box
+
     # ── Slots ────────────────────────────────────────────────────────────────
 
     def _on_load(self, idx: int):
@@ -218,10 +369,21 @@ class MainTab(QWidget):
             return
         with open(path, "rb") as f:
             self._img_bytes[idx] = f.read()
-        self._img_px[idx] = QPixmap(path)
+        px = QPixmap(path)
+        self._img_px[idx] = px
+        self._img_sizes[idx] = (px.width(), px.height())
         self._view_mode[idx] = "harris"
-        self._show_pixmap(self._lbl_img[idx], self._img_px[idx])
+        self._show_pixmap(self._lbl_img[idx], px)
         self._lbl_status.setText(f"Image {'AB'[idx]} loaded: {os.path.basename(path)}")
+
+        # Reset stale results
+        self._results[idx] = None
+        self._match_result = None
+        self._match_view = False
+        self._match_controls.setVisible(False)
+        self._match_stats_box.setVisible(False)
+        self._btn_match.setEnabled(False)
+
         if BACKEND_AVAILABLE and all(self._img_bytes):
             self._btn_run.setEnabled(True)
 
@@ -235,9 +397,14 @@ class MainTab(QWidget):
             "num_octaves": self._sp_octaves.value(),
         }
         self._btn_run.setEnabled(False)
+        self._btn_match.setEnabled(False)
         self._progress.setVisible(True)
-        self._lbl_status.setText("Running…")
+        self._lbl_status.setText("Running description…")
         self._pending = 2
+        self._match_result = None
+        self._match_view = False
+        self._match_controls.setVisible(False)
+        self._match_stats_box.setVisible(False)
 
         for i in range(2):
             w = DescriptionWorker(self._img_bytes[i], params, i)
@@ -264,24 +431,140 @@ class MainTab(QWidget):
         if self._pending == 0:
             self._progress.setVisible(False)
             self._btn_run.setEnabled(True)
-            self._lbl_status.setText("Done. Descriptors ready for matching.")
+            self._btn_match.setEnabled(True)
+            self._lbl_status.setText("Done. Click Match to match features.")
 
     def _on_error(self, msg: str):
-        self._pending -= 1
+        self._pending = 0
         self._progress.setVisible(False)
         self._btn_run.setEnabled(True)
         self._lbl_status.setText(f"Error: {msg}")
 
+    # ── Matching ─────────────────────────────────────────────────────────────
+
+    def _on_match(self):
+        if self._results[0] is None or self._results[1] is None:
+            return
+        self._btn_match.setEnabled(False)
+        self._btn_run.setEnabled(False)
+        self._progress.setVisible(True)
+        self._lbl_status.setText("Running matching…")
+
+        w = MatchingWorker(self._results[0], self._results[1])
+        w.finished.connect(self._on_match_done)
+        w.error.connect(self._on_match_error)
+        self._match_worker = w
+        w.start()
+
+    def _on_match_done(self, match_result):
+        self._match_result = match_result
+        self._progress.setVisible(False)
+        self._btn_run.setEnabled(True)
+        self._btn_match.setEnabled(True)
+
+        # Update match stats
+        r = match_result
+        self._mstat_ssd_count_h.setText(str(r.harris_ssd_match_count))
+        self._mstat_ssd_time_h.setText(f"{r.harris_ssd_time_ms:.2f} ms")
+        self._mstat_ncc_count_h.setText(str(r.harris_ncc_match_count))
+        self._mstat_ncc_time_h.setText(f"{r.harris_ncc_time_ms:.2f} ms")
+
+        self._mstat_ssd_count_l.setText(str(r.lambda_ssd_match_count))
+        self._mstat_ssd_time_l.setText(f"{r.lambda_ssd_time_ms:.2f} ms")
+        self._mstat_ncc_count_l.setText(str(r.lambda_ncc_match_count))
+        self._mstat_ncc_time_l.setText(f"{r.lambda_ncc_time_ms:.2f} ms")
+
+        self._match_stats_box.setVisible(True)
+
+        # Enter match overlay view
+        self._match_view = True
+        self._match_detector = "harris"
+        self._match_method   = "ssd"
+        self._match_controls.setVisible(True)
+        self._refresh_match_toggles()
+        self._refresh_match_overlay()
+
+        self._lbl_status.setText("Matching complete. Toggle detector/method to compare.")
+
+    def _on_match_error(self, msg: str):
+        self._progress.setVisible(False)
+        self._btn_run.setEnabled(True)
+        self._btn_match.setEnabled(True)
+        self._lbl_status.setText(f"Matching error: {msg}")
+
+    def _set_match_detector(self, det: str):
+        self._match_detector = det
+        self._refresh_match_toggles()
+        self._refresh_match_overlay()
+
+    def _set_match_method(self, method: str):
+        self._match_method = method
+        self._refresh_match_toggles()
+        self._refresh_match_overlay()
+
+    def _exit_match_view(self):
+        self._match_view = False
+        self._match_controls.setVisible(False)
+        for i in range(2):
+            self._refresh_view(i)
+        self._lbl_status.setText("Keypoint view restored. Click Match to see matches again.")
+
+    def _refresh_match_toggles(self):
+        is_harris = self._match_detector == "harris"
+        self._btn_m_harris.setObjectName("active" if is_harris else "")
+        self._btn_m_lambda.setObjectName("active" if not is_harris else "")
+        for btn in (self._btn_m_harris, self._btn_m_lambda):
+            btn.style().unpolish(btn); btn.style().polish(btn)
+
+        is_ssd = self._match_method == "ssd"
+        self._btn_m_ssd.setObjectName("active" if is_ssd else "")
+        self._btn_m_ncc.setObjectName("active" if not is_ssd else "")
+        for btn in (self._btn_m_ssd, self._btn_m_ncc):
+            btn.style().unpolish(btn); btn.style().polish(btn)
+
+    def _refresh_match_overlay(self):
+        r = self._match_result
+        if r is None:
+            return
+
+        if self._match_detector == "harris":
+            if self._match_method == "ssd":
+                kptsA, kptsB = r.harris_kpts_a, r.harris_kpts_b
+            else:
+                kptsA, kptsB = r.harris_ncc_kpts_a, r.harris_ncc_kpts_b
+        else:
+            if self._match_method == "ssd":
+                kptsA, kptsB = r.lambda_kpts_a, r.lambda_kpts_b
+            else:
+                kptsA, kptsB = r.lambda_ncc_kpts_a, r.lambda_ncc_kpts_b
+
+        n = min(len(kptsA), len(kptsB))
+        colors = _random_colors(n)
+
+        wA, hA = self._img_sizes[0]
+        wB, hB = self._img_sizes[1]
+
+        overlayA = _draw_keypoint_overlay(self._img_px[0], kptsA, wA, hA, colors)
+        overlayB = _draw_keypoint_overlay(self._img_px[1], kptsB, wB, hB, colors)
+
+        self._show_pixmap(self._lbl_img[0], overlayA)
+        self._show_pixmap(self._lbl_img[1], overlayB)
+
+    # ── Description view ─────────────────────────────────────────────────────
+
     def _set_view(self, idx: int, mode: str):
         if self._results[idx] is None:
             return
+        # Exit match overlay when user clicks a detector toggle on individual images
+        if self._match_view:
+            self._exit_match_view()
         self._view_mode[idx] = mode
         self._refresh_view(idx)
         self._update_toggle_style(idx)
 
-    # ── Display ──────────────────────────────────────────────────────────────
-
     def _refresh_view(self, idx: int):
+        if self._match_view:
+            return  # Don't overwrite match overlay
         if self._results[idx] is None:
             if self._img_px[idx]:
                 self._show_pixmap(self._lbl_img[idx], self._img_px[idx])
@@ -305,5 +588,8 @@ class MainTab(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        for i in range(2):
-            self._refresh_view(i)
+        if self._match_view:
+            self._refresh_match_overlay()
+        else:
+            for i in range(2):
+                self._refresh_view(i)
