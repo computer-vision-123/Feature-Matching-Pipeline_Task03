@@ -18,8 +18,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 static inline int reflectIdx(int i, int len)
 {
-    if (i < 0)    return -i;
-    if (i >= len) return 2 * len - 2 - i;
+    while (i < 0 || i >= len)
+    {
+        if (i < 0)
+            i = -i;
+        if (i >= len)
+            i = 2 * len - 2 - i;
+    }
     return i;
 }
 
